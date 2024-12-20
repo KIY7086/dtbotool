@@ -1,0 +1,76 @@
+name: Build and Release dtbotool
+
+on:
+  push:
+    tags:
+      - 'v*' # 当推送版本标签时触发工作流
+  workflow_dispatch: # 手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest, android, freebsd]
+        arch: [amd64, arm64]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.20'
+
+    - name: Install Android dependencies
+      if: matrix.os == 'android'
+      run: |
+        apt-get update
+        apt-get install -y build-essential
+        # 确保在 Termux 环境中支持交叉编译
+        echo "Android dependencies installed."
+
+    - name: Build
+      run: |
+        GOOS=$(echo ${{ matrix.os }} | cut -d '-' -f 1)
+        GOARCH=${{ matrix.arch }}
+        OUTPUT_NAME="dtbotool-${GOOS}-${GOARCH}"
+        if [ "$GOOS" == "windows" ]; then
+          OUTPUT_NAME="${OUTPUT_NAME}.exe"
+        fi
+        env GOOS=$GOOS GOARCH=$GOARCH go build -o $OUTPUT_NAME ./...
+      shell: bash
+
+    - name: Upload binary
+      uses: actions/upload-artifact@v3
+      with:
+        name: dtbotool-${{ matrix.os }}-${{ matrix.arch }}
+        path: dtbotool-*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download binaries
+      uses: actions/download-artifact@v3
+      with:
+        path: release-binaries
+
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref_name }}
+        release_name: Release ${{ github.ref_name }}
+        draft: false
+        prerelease: false
+
+    - name: Upload binaries to Release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        release_id: ${{ steps.create-release.outputs.id }}
+        asset_path: release-binaries/*
+        asset_name: ${{ github.event.inputs.name }}
+        asset_content_type: application/octet-stream
